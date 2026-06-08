@@ -2,10 +2,23 @@
 #include <string>
 #include <vector>
 #include <algorithm>
+#include <cstdlib>
+#include <ctime>
 
 struct Money {
     int rubles;
     int kopecks;
+
+    void normalize() {
+        if (kopecks >= 100) {
+            rubles += kopecks / 100;
+            kopecks %= 100;
+        }
+        if (kopecks < 0 && rubles > 0) {
+            rubles -= 1 + (-kopecks) / 100;
+            kopecks = 100 - (-kopecks) % 100;
+        }
+    }
 };
 
 union Bonus {
@@ -16,20 +29,20 @@ union Bonus {
 class Employee {
 protected:
     std::string name;
-    int baseIncome;
+    int baseIncomeKopecks;
 
 public:
-    Employee(std::string empName, int income) : name(empName), baseIncome(income) {}
+    Employee(std::string empName, int incomeKopecks) : name(empName), baseIncomeKopecks(incomeKopecks) {}
     virtual ~Employee() = default;
 
     virtual void work() = 0; 
-    virtual int getIncome() const { return baseIncome; }
+    virtual int getIncomeKopecks() const { return baseIncomeKopecks; }
     std::string getName() const { return name; }
 };
 
 class JuniorDev : public Employee {
 public:
-    JuniorDev(std::string name) : Employee(name, 5) {}
+    JuniorDev(std::string name) : Employee(name, 500) {}
 
     void work() override {
         std::cout << "[!] " << name << " пишет код со звуками паники...\n";
@@ -37,11 +50,25 @@ public:
 };
 
 class SeniorDev : public Employee {
+private:
+    double activeMultiplier = 1.0;
 public:
-    SeniorDev(std::string name) : Employee(name, 25) {}
+    SeniorDev(std::string name, Bonus bonus, bool isMultiplier) : Employee(name, 2500) {
+        if (isMultiplier) {
+            activeMultiplier = bonus.multiplier;
+        }
+    }
 
     void work() override {
-        std::cout << "[!] " << name << " исправил баг одним взглядом!\n";
+        std::cout << "[!] " << name << " исправил баг одним взглядом! ";
+        if (activeMultiplier > 1.0) {
+            std::cout << "(Эффективность x" << activeMultiplier << ")";
+        }
+        std::cout << "\n";
+    }
+
+    int getIncomeKopecks() const override {
+        return static_cast<int>(baseIncomeKopecks * activeMultiplier);
     }
 };
 
@@ -60,13 +87,14 @@ void showMenu(std::string menuItems[], int size) {
 
 int main() {
     std::system("chcp 65001 > nul");
+    std::srand(static_cast<unsigned int>(std::time(nullptr)));
 
     Money companyWallet = {0, 0};
     int officeLevel = 1;
 
     const int MENU_SIZE = 4;
     std::string actionMenu[MENU_SIZE] = {
-        "Кликнуть (написать строчку кода сам)",
+        "Кликнуть (написать строчку кода)",
         "Нанять Джуниора (стоит 150 руб)",
         "Нанять Сеньора (стоит 500 руб)",
         "Прокачать офис (рекурсивный расчет цены)"
@@ -79,31 +107,44 @@ int main() {
     int choice = -1;
     while (choice != 0) {
         std::cout << "\n----------------------------------------\n";
-        std::cout << "Баланс компании: " << companyWallet.rubles << " руб.\n";
+        std::cout << "Баланс компании: " << companyWallet.rubles << "." 
+                  << (companyWallet.kopecks < 10 ? "0" : "") << companyWallet.kopecks << " руб.\n";
         std::cout << "Уровень офиса: " << officeLevel << "\n";
         std::cout << "Сотрудников в штате: " << team.size() << "\n";
 
         showMenu(actionMenu, MENU_SIZE);
-        std::cin >> choice;
+        
+        if (!(std::cin >> choice)) {
+            std::cout << "[X] Ошибка ввода! Введите число.\n";
+            std::cin.clear();
+            std::cin.ignore(10000, '\n');
+            continue;
+        }
         std::cout << "\n----------------------------------------\n";
 
         switch (choice) {
             case 1: {
-                int clickIncome = 10 * officeLevel;
-                companyWallet.rubles += clickIncome;
-                std::cout << "[+] Вы написали код и заработали " << clickIncome << " руб.!\n";
+                int clickRubles = 10 * officeLevel;
+                int clickKopecks = 50 * officeLevel;
+                
+                companyWallet.rubles += clickRubles;
+                companyWallet.kopecks += clickKopecks;
+                companyWallet.normalize();
+
+                std::cout << "[+] Вы заработали " << clickRubles << " руб. " << clickKopecks << " коп.!\n";
 
                 std::for_each(team.begin(), team.end(), [&companyWallet](Employee* emp) {
                     emp->work();
-                    companyWallet.rubles += emp->getIncome();
+                    companyWallet.kopecks += emp->getIncomeKopecks();
                 });
+                companyWallet.normalize();
                 break;
             }
             case 2: {
                 if (companyWallet.rubles >= 150) {
                     companyWallet.rubles -= 150;
                     team.push_back(new JuniorDev("Джун Вася"));
-                    std::cout << "[+] Вы наняли Джуниора Васю! Теперь он помогает вам кодить.\n";
+                    std::cout << "[+] Вы наняли Джуниора Васю! Теперь он паникует за деньги.\n";
                 } else {
                     std::cout << "[X] Не хватает денег! Нужно 150 руб.\n";
                 }
@@ -112,8 +153,26 @@ int main() {
             case 3: {
                 if (companyWallet.rubles >= 500) {
                     companyWallet.rubles -= 500;
-                    team.push_back(new SeniorDev("Сеньор Петр"));
-                    std::cout << "[+] Вы наняли Сеньора Петра! Доходы резко растут.\n";
+
+                    Bonus seniorBonus;
+                    bool isMultiplier = std::rand() % 2 == 0;
+
+                    if (isMultiplier) {
+                        seniorBonus.multiplier = 1.2 + (std::rand() % 4) * 0.1;
+                        team.push_back(new SeniorDev("Сеньор Петр", seniorBonus, true));
+                        std::cout << "[+] Нанят Сеньор Петр с бонусом: скорость кодинга x" << seniorBonus.multiplier << "!\n";
+                    } else {
+                        seniorBonus.flatAmount = 5000 + (std::rand() % 10001);
+                        companyWallet.kopecks += seniorBonus.flatAmount;
+                        companyWallet.normalize();
+                        
+                        Bonus dummyBonus; dummyBonus.multiplier = 1.0;
+                        team.push_back(new SeniorDev("Сеньор Петр", dummyBonus, true));
+                        
+                        std::cout << "[+] Нанят Сеньор Петр! Получен грант " 
+                                  << seniorBonus.flatAmount / 100 << " руб. " 
+                                  << seniorBonus.flatAmount % 100 << " коп. за его привлечение!\n";
+                    }
                 } else {
                     std::cout << "[X] Не хватает денег! Нужно 500 руб.\n";
                 }
@@ -130,7 +189,7 @@ int main() {
                     if (companyWallet.rubles >= cost) {
                         companyWallet.rubles -= cost;
                         officeLevel++;
-                        std::cout << "[▲] Офис успешно улучшен! Ваши личные клики стали эффективнее.\n";
+                        std::cout << "[▲] Офис успешно улучшен! Клики стали эффективнее.\n";
                     } else {
                         std::cout << "[X] Не хватает денег для апгрейда!\n";
                     }
@@ -138,7 +197,8 @@ int main() {
                 break;
             }
             case 0:
-                std::cout << "Выход из игры. Ваш итоговый счет: " << companyWallet.rubles << " руб.\n";
+                std::cout << "Выход из игры. Ваш итоговый счет: " << companyWallet.rubles << "." 
+                          << (companyWallet.kopecks < 10 ? "0" : "") << companyWallet.kopecks << " руб.\n";
                 break;
             default:
                 std::cout << "Неверный пункт меню!\n";
